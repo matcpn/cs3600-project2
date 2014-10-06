@@ -89,12 +89,12 @@ void myformat(int size) {
 					 WANT TO REPLACE THE CODE BELOW WITH SOMETHING MEANINGFUL. */
 
 	// first, create a zero-ed out array of memory  
-	char *tmp = (char *) malloc(BLOCKSIZE);
-	memset(tmp, 0, BLOCKSIZE);
+	char *temp = (char *) malloc(BLOCKSIZE);
+	memset(temp, 0, BLOCKSIZE);
 
 	// now, write that to every block
 	for (int i=0; i<size; i++) 
-		if (dwrite(i, tmp) < 0) 
+		if (dwrite(i, temp) < 0) 
 			perror("Error while writing to disk");
 
 	// voila! we now have a disk containing all zeros
