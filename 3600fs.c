@@ -38,6 +38,11 @@
 #include "3600fs.h"
 #include "disk.h"
 
+// GLOBAL VARIABLES
+vcb myRealVCB;
+dirent allTheDirEnts[100];
+fatent *fatTable;
+
 /*
  * Initialize filesystem. Read in file system metadata and initialize
  * memory structures. If there are inconsistencies, now would also be
@@ -48,53 +53,77 @@
  *
  */
 static void* vfs_mount(struct fuse_conn_info *conn) {
-  fprintf(stderr, "vfs_mount called\n");
+	fprintf(stderr, "vfs_mount called\n");
 
-  // Do not touch or move this code; connects the disk
-  dconnect();
+	// Do not touch or move this code; connects the disk
+	dconnect();
 
-  /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
-           AND LOAD ANY DATA STRUCTURES INTO MEMORY */
-  // Allocate the VCB
-  vcb myvcb;
+	/* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
+					 AND LOAD ANY DATA STRUCTURES INTO MEMORY */
+	// Allocate the VCB
 
-  // Temporary BLOCKSIZE-d location
-  char tmp[BLOCKSIZE];
-  memset(tmp, 0, BLOCKSIZE);
+	// Temporary BLOCKSIZE-d location
+	char tmp[BLOCKSIZE];
+	memset(tmp, 0, BLOCKSIZE);
 
-  // Read the VCB from disk
-  dread(0, tmp);
+	// Read the VCB from disk
+	dread(0, tmp);
 
-  // Copy into VCB structure
-  memcpy(&myvcb, tmp, sizeof(vcb));
+	// Copy into VCB structure
+	memcpy(&myRealVCB, tmp, sizeof(vcb));
 
-  // Check the magic number
-  if (myvcb.magic != 17) {
-    fprintf(stderr, "This is not the right filesystem, give up.");
-  }
+	// Check the magic number
+	if (myRealVCB.magic != 17) {
+		fprintf(stderr, "This is not the right filesystem, give up.");
+	}
 
-  // Read the DirEnts
-  char deTmp[BLOCKSIZE];
-  for(int i = 0; i < 100; i++) {
-    memset(deTmp, 0, BLOCKSIZE); //
-  }
+	// Read the DirEnts from Disk
+	char deTmp[BLOCKSIZE];
+	for(int i = 0; i < 100; i++) {
+		memset(deTmp, 0, BLOCKSIZE);
+		dread(i + 1, deTmp);
+		memcpy(&allTheDirEnts[i], deTmp, sizeof(dirent)); // Copy all dirents into their array so we can access them
+	}
 
-  return NULL;
+	// Create the FAT Table
+	fatTable = (fatent *) malloc(myRealVCB.fat_length * BLOCKSIZE);
+	for(int i = 0; i < myRealVCB.fat_length; i++) {
+		char buf[BLOCKSIZE];
+		memset(buf, 0, BLOCKSIZE);
+		dread(myRealVCB.fat_start + i, buf);
+		memcpy(fatTable + 128 * i, buf, BLOCKSIZE);
+	}
+
+	return NULL;
 }
 
 /*
  * Called when your file system is unmounted.
- *
+ 
  */
 static void vfs_unmount (void *private_data) {
-  fprintf(stderr, "vfs_unmount called\n");
+	fprintf(stderr, "vfs_unmount called\n");
 
-  /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
-           ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
-           KEEP DATA CACHED THAT'S NOT ON DISK */
+	/* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
+					 ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
+					 KEEP DATA CACHED THAT'S NOT ON DISK */
+	
+	// Write the DEs to Disk, should be its own function
+	for(int i = 0; i < 100; i++) {
+		char buffer[BLOCKSIZE];
+		memset(buffer, 0, BLOCKSIZE);
+		memcpy(buffer, &allTheDirEnts[i], sizeof(dirent));
+		dwrite(i + 1, buffer);
+	}
+	// Save the FatTable to Disk
+	for(int i = 0; i < myRealVCB.fat_length; i++) {
+		char buffer[BLOCKSIZE];
+		memcpy(buffer, fatTable + 128 * i, BLOCKSIZE);
+		dwrite(myRealVCB.fat_start + i, buffer);
+	}
 
-  // Do not touch or move this code; unconnects the disk
-  dunconnect();
+	// Do not touch or move this code; unconnects the disk
+	dunconnect();
 }
 
 /* 
@@ -109,31 +138,44 @@ static void vfs_unmount (void *private_data) {
  *
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
-  fprintf(stderr, "vfs_getattr called\n");
+	fprintf(stderr, "vfs_getattr called\n");
 
-  // Do not mess with this code 
-  stbuf->st_nlink = 1; // hard links
-  stbuf->st_rdev  = 0;
-  stbuf->st_blksize = BLOCKSIZE;
+	// Do not mess with this code 
+	stbuf->st_nlink = 1; // hard links
+	stbuf->st_rdev  = 0;
+	stbuf->st_blksize = BLOCKSIZE;
 
-  /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
-  
-  /*
-  if (The path represents the root directory)
-    stbuf->st_mode  = 0777 | S_IFDIR;
-  else 
-    stbuf->st_mode  = <<file mode>> | S_IFREG;
+	/* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
+	
+	
+	// Root directory since it's info is in the VCB
+	if (strcmp(path, "/") == 0) {
+		stbuf->st_mode = 0777 | S_IFDIR;
+		stbuf->st_uid = getuid();
+		stbuf->st_gid =  getgid();
+		return 0;
+	}
+		
+	// Any other file with a dirent
+	for(int i = 0; i < 100; i++) {
+		// If the name matches and is valid (has things written to it)
+		if ((strcmp(path, allTheDirEnts[i].name) == 0) && (allTheDirEnts[i].valid == 1)) {
+			// Found the file
+			stbuf->st_uid = allTheDirEnts[i].user;
+			stbuf->st_gid = allTheDirEnts[i].group;
+			stbuf->st_mode = allTheDirEnts[i].mode;
 
-  stbuf->st_uid     = // file uid
-  stbuf->st_gid     = // file gid
-  stbuf->st_atime   = // access time 
-  stbuf->st_mtime   = // modify time
-  stbuf->st_ctime   = // create time
-  stbuf->st_size    = // file size
-  stbuf->st_blocks  = // file size in blocks
-    */
+			clock_gettime(CLOCK_REALTIME, stbuf->st_atime);
+			clock_gettime(CLOCK_REALTIME, stbuf->st_mtime);
+			clock_gettime(CLOCK_REALTIME, stbuf->st_ctime); 
+			stbuf->st_size = allTheDirEnts[i].size;
 
-  return 0;
+			stbuf->st_blocks = ((allTheDirEnts[i].size / BLOCKSIZE) + 1);
+			return 0;
+		}
+	}		
+
+	return -ENOENT;
 }
 
 /*
@@ -150,7 +192,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  *       UN-COMMENT THIS METHOD.
 static int vfs_mkdir(const char *path, mode_t mode) {
 
-  return -1;
+	return -1;
 } */
 
 /** Read directory
@@ -176,10 +218,10 @@ static int vfs_mkdir(const char *path, mode_t mode) {
  *
  */
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-                       off_t offset, struct fuse_file_info *fi)
+											 off_t offset, struct fuse_file_info *fi)
 {
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -188,7 +230,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    return 0;
+		return 0;
 }
 
 /*
@@ -205,10 +247,10 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
  *
  */
 static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
-                    struct fuse_file_info *fi)
+										struct fuse_file_info *fi)
 {
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -223,13 +265,13 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
  * HINT: Ignore 'fi'
  */
 static int vfs_write(const char *path, const char *buf, size_t size,
-                     off_t offset, struct fuse_file_info *fi)
+										 off_t offset, struct fuse_file_info *fi)
 {
 
-  /* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
-           MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
+	/* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
+					 MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
 
-  return 0;
+	return 0;
 }
 
 /**
@@ -239,10 +281,10 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 static int vfs_delete(const char *path)
 {
 
-  /* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
-           AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
+	/* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
+					 AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -255,7 +297,7 @@ static int vfs_delete(const char *path)
 static int vfs_rename(const char *from, const char *to)
 {
 
-    return 0;
+		return 0;
 }
 
 
@@ -271,7 +313,7 @@ static int vfs_rename(const char *from, const char *to)
 static int vfs_chmod(const char *file, mode_t mode)
 {
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -282,7 +324,7 @@ static int vfs_chmod(const char *file, mode_t mode)
 static int vfs_chown(const char *file, uid_t uid, gid_t gid)
 {
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -292,7 +334,7 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
 static int vfs_utimens(const char *file, const struct timespec ts[2])
 {
 
-    return 0;
+		return 0;
 }
 
 /*
@@ -303,10 +345,10 @@ static int vfs_utimens(const char *file, const struct timespec ts[2])
 static int vfs_truncate(const char *file, off_t offset)
 {
 
-  /* 3600: NOTE THAT ANY BLOCKS FREED BY THIS OPERATION SHOULD
-           BE AVAILABLE FOR OTHER FILES TO USE. */
+	/* 3600: NOTE THAT ANY BLOCKS FREED BY THIS OPERATION SHOULD
+					 BE AVAILABLE FOR OTHER FILES TO USE. */
 
-    return 0;
+		return 0;
 }
 
 
@@ -319,28 +361,28 @@ static int vfs_truncate(const char *file, off_t offset)
  *     .mkdir	 = vfs_mkdir,
  */
 static struct fuse_operations vfs_oper = {
-    .init    = vfs_mount,
-    .destroy = vfs_unmount,
-    .getattr = vfs_getattr,
-    .readdir = vfs_readdir,
-    .create	 = vfs_create,
-    .read	 = vfs_read,
-    .write	 = vfs_write,
-    .unlink	 = vfs_delete,
-    .rename	 = vfs_rename,
-    .chmod	 = vfs_chmod,
-    .chown	 = vfs_chown,
-    .utimens	 = vfs_utimens,
-    .truncate	 = vfs_truncate,
+		.init    = vfs_mount,
+		.destroy = vfs_unmount,
+		.getattr = vfs_getattr,
+		.readdir = vfs_readdir,
+		.create	 = vfs_create,
+		.read	 = vfs_read,
+		.write	 = vfs_write,
+		.unlink	 = vfs_delete,
+		.rename	 = vfs_rename,
+		.chmod	 = vfs_chmod,
+		.chown	 = vfs_chown,
+		.utimens	 = vfs_utimens,
+		.truncate	 = vfs_truncate,
 };
 
 int main(int argc, char *argv[]) {
-    /* Do not modify this function */
-    umask(0);
-    if ((argc < 4) || (strcmp("-s", argv[1])) || (strcmp("-d", argv[2]))) {
-      printf("Usage: ./3600fs -s -d <dir>\n");
-      exit(-1);
-    }
-    return fuse_main(argc, argv, &vfs_oper, NULL);
+		/* Do not modify this function */
+		umask(0);
+		if ((argc < 4) || (strcmp("-s", argv[1])) || (strcmp("-d", argv[2]))) {
+			printf("Usage: ./3600fs -s -d <dir>\n");
+			exit(-1);
+		}
+		return fuse_main(argc, argv, &vfs_oper, NULL);
 }
 
