@@ -56,6 +56,7 @@ void myformat(int size) {
 	// Create new DE
 	dirent newDirectoryEntry;
 	newDirectoryEntry.valid = 0;
+	
 	char deTmp[BLOCKSIZE];
 	memset(deTmp, 0, BLOCKSIZE);
 	memcpy(deTmp, &newDirectoryEntry, sizeof(dirent));

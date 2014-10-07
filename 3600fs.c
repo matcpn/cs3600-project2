@@ -60,7 +60,6 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
 	/* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
 					 AND LOAD ANY DATA STRUCTURES INTO MEMORY */
-	// Allocate the VCB
 
 	// Temporary BLOCKSIZE-d location
 	char tmp[BLOCKSIZE];
@@ -122,6 +121,7 @@ static void vfs_unmount (void *private_data) {
 		dwrite(myRealVCB.fat_start + i, buffer);
 	}
 
+	free(fatTable);
 	// Do not touch or move this code; unconnects the disk
 	dunconnect();
 }
@@ -165,9 +165,12 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 			stbuf->st_gid = allTheDirEnts[i].group;
 			stbuf->st_mode = allTheDirEnts[i].mode;
 
-			clock_gettime(CLOCK_REALTIME, stbuf->st_atime);
-			clock_gettime(CLOCK_REALTIME, stbuf->st_mtime);
-			clock_gettime(CLOCK_REALTIME, stbuf->st_ctime); 
+			// clock_gettime(CLOCK_REALTIME, stbuf->st_atime);
+			// clock_gettime(CLOCK_REALTIME, stbuf->st_mtime);
+			// clock_gettime(CLOCK_REALTIME, stbuf->st_ctime); 
+			stbuf->st_atime = allTheDirEnts[i].access_time;
+			stbuf->st_mtime = allTheDirEnts[i].modify_time;
+			stbuf->st_ctime = allTheDirEnts[i].create_time;
 			stbuf->st_size = allTheDirEnts[i].size;
 
 			stbuf->st_blocks = ((allTheDirEnts[i].size / BLOCKSIZE) + 1);
