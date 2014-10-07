@@ -168,9 +168,9 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 			// clock_gettime(CLOCK_REALTIME, stbuf->st_atime);
 			// clock_gettime(CLOCK_REALTIME, stbuf->st_mtime);
 			// clock_gettime(CLOCK_REALTIME, stbuf->st_ctime); 
-			stbuf->st_atime = allTheDirEnts[i].access_time;
-			stbuf->st_mtime = allTheDirEnts[i].modify_time;
-			stbuf->st_ctime = allTheDirEnts[i].create_time;
+			stbuf->st_atime = allTheDirEnts[i].access_time.tv_sec;
+			stbuf->st_mtime = allTheDirEnts[i].modify_time.tv_sec;
+			stbuf->st_ctime = allTheDirEnts[i].create_time.tv_sec;
 			stbuf->st_size = allTheDirEnts[i].size;
 
 			stbuf->st_blocks = ((allTheDirEnts[i].size / BLOCKSIZE) + 1);
