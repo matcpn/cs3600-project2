@@ -55,6 +55,29 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
+  // Allocate the VCB
+  vcb myvcb;
+
+  // Temporary BLOCKSIZE-d location
+  char tmp[BLOCKSIZE];
+  memset(tmp, 0, BLOCKSIZE);
+
+  // Read the VCB from disk
+  dread(0, tmp);
+
+  // Copy into VCB structure
+  memcpy(&myvcb, tmp, sizeof(vcb));
+
+  // Check the magic number
+  if (myvcb.magic != 17) {
+    fprintf(stderr, "This is not the right filesystem, give up.");
+  }
+
+  // Read the DirEnts
+  char deTmp[BLOCKSIZE];
+  for(int i = 0; i < 100; i++) {
+    memset(deTmp, 0, BLOCKSIZE); //
+  }
 
   return NULL;
 }

@@ -24,44 +24,6 @@
 #define DE_START 1 // Starts after VCB
 #define DE_LENGTH 100 // Number of file entries
 
-// VCB Data Structure
-typedef struct vcb_s {
-	// Magic number to identify our disk
-	int magic;
-
-	// description of the disk layout
-	int blocksize;
-	int de_start;
-	int de_length;
-	int fat_start;
-	int fat_length;
-	int db_start;
-
-	//metadata for the root directory
-	uid_t user;
-	gid_t group;
-	mode_t mode;
-	struct timespec access_time;
-	struct timespec modify_time;
-	struct timespec create_time;
-} vcb;
-
-// Dirent Data Structure
-typedef struct dirent_s {
-	unsigned int valid;
-	unsigned int first_block;
-	unsigned int size;
-
-	uid_t user;
-	uid_t group;
-	mode_t mode;
-	struct timespec access_time;
-	struct timespec modify_time;
-	struct timespec create_time;
-
-	char name[440]; // Makes the total size 512 bytes
-} dirent;
-
 void myformat(int size) {
 	// Do not touch or move this function
 	dcreate_connect();
@@ -70,34 +32,47 @@ void myformat(int size) {
 	STRUCTURES TO THEIR INITIAL VALUE, AS YOU ARE FORMATTING
 	A BLANK DISK.  YOUR DISK SHOULD BE size BLOCKS IN SIZE. */
 
-	// Set up your vcb
+	// Set up VCB
 	vcb myvcb;
 	myvcb.magic = 17;
 	myvcb.blocksize = BLOCKSIZE;
 	myvcb.de_start = DE_START;
 	myvcb.de_length = DE_LENGTH;
-	myvcb.fat_start = (DE_LENGTH + 1);
+	myvcb.fat_start = (DE_LENGTH + 1); // Block after DE
 
-	// myvcb.fat_length
-	// myvcb.db_start
+	int numberOfBlocks = size - (1 + DE_LENGTH);
+	myvcb.fat_length = numberOfBlocks / 128 + 1;
+	myvcb.db_start = DE_LENGTH + myvcb.fat_length + 1; // Block after FAT
 
-	char tmp[BLOCKSIZE];
-	memset(tmp, 0, BLOCKSIZE);
-	memcpy(tmp, &myvcb, sizeof(vcb));
+	char vcbTmp[BLOCKSIZE];
+	memset(vcbTmp, 0, BLOCKSIZE);
+	memcpy(vcbTmp, &myvcb, sizeof(vcb));
 
-	/* 3600: AN EXAMPLE OF READING/WRITING TO THE DISK IS BELOW - YOU'LL
-					 WANT TO REPLACE THE CODE BELOW WITH SOMETHING MEANINGFUL. */
+	// Write the VCB to Disk
+	dwrite(0, vcbTmp);
 
-	// first, create a zero-ed out array of memory  
-	char *temp = (char *) malloc(BLOCKSIZE);
-	memset(temp, 0, BLOCKSIZE);
+	/* Next, write the DEs */
 
-	// now, write that to every block
-	for (int i=0; i<size; i++) 
-		if (dwrite(i, temp) < 0) 
-			perror("Error while writing to disk");
+	// Create new DE
+	dirent newDirectoryEntry;
+	newDirectoryEntry.valid = 0;
+	char deTmp[BLOCKSIZE];
+	memset(deTmp, 0, BLOCKSIZE);
+	memcpy(deTmp, &newDirectoryEntry, sizeof(dirent));
 
-	// voila! we now have a disk containing all zeros
+	// Write the Directory Entries to Disk
+	for(int i = 1; i < (DE_START + DE_LENGTH); i++) {
+		dwrite(i, deTmp);
+	}
+
+	/* Thirdly, write the FAT Table */
+	char fatTmp[BLOCKSIZE];
+	memset(fatTmp, 0, BLOCKSIZE);
+
+	// Write FAT Table to Disk
+	for(int i = 0; i < myvcb.fat_length; i++) {
+		dwrite(myvcb.fat_start + i, fatTmp);
+	}
 
 	// Do not touch or move this function
 	dunconnect();
