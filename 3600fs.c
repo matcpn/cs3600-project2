@@ -165,9 +165,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 			stbuf->st_gid = allTheDirEnts[i].group;
 			stbuf->st_mode = allTheDirEnts[i].mode;
 
-			// clock_gettime(CLOCK_REALTIME, stbuf->st_atime);
-			// clock_gettime(CLOCK_REALTIME, stbuf->st_mtime);
-			// clock_gettime(CLOCK_REALTIME, stbuf->st_ctime); 
 			stbuf->st_atime = allTheDirEnts[i].access_time.tv_sec;
 			stbuf->st_mtime = allTheDirEnts[i].modify_time.tv_sec;
 			stbuf->st_ctime = allTheDirEnts[i].create_time.tv_sec;
@@ -223,8 +220,31 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 											 off_t offset, struct fuse_file_info *fi)
 {
+		// Only do anything if in root since we're not supporting more directories
+		if (strcmp(path, "/") == 0) {
+				// Generic stat object to do work with
+
+				// Loop through dirents and get valid stat info
+				filler(buf, ".", 0, 0);
+				filler(buf, "..", 0, 0);
+				for(int i = offset; i < 100; i++) {
+					// If the dirent is valid (has things written to it)
+					struct stat stat_struct;
+					if (allTheDirEnts[i].valid == 1) {
+						// Copy things to the stat
+						stat_struct.st_uid = allTheDirEnts[i].user;
+						stat_struct.st_gid = allTheDirEnts[i].group;
+						stat_struct.st_mode = allTheDirEnts[i].mode;
+						filler(buf, allTheDirEnts[i].name, &stat_struct, 0);
+					}
+				}
+		}
+		else {
+			return -1;
+		}
 
 		return 0;
+		
 }
 
 /*
@@ -233,6 +253,40 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+		// Allocate and initialize a new file entry -> 0
+			// Make a new DE
+			// Fill in name, set valid to 1, set uid,gid,mode
+			// access/modify/create to now
+			// IMPORTANT first_block just the number of the fatent that starts this
+			// Fatent needs to be instantiated.
+			// Size is still 0 right now.
+			// Make sure we write the dirent
+
+		// Check that the path is valid OR file already exists -> -1
+		if ((validPath(path) == 1) || (findDEBlock(path) < 0)) {
+			// Create a new DE
+			dirent dir;
+
+			// Assign dir things
+			dir.valid = 1;
+			dir.size = 0;
+			dir.user = getuid();
+			dir.group = getgid();
+			dir.mode = mode;
+
+			// Assign times
+			clock_gettime(CLOCK_REALTIME, dir.access_time);
+			clock_gettime(CLOCK_REALTIME, dir.modify_time);
+			clock_gettime(CLOCK_REALTIME, dir.create_time);
+
+			// Create a new Fatent
+			fatent fe = findNextAvailableFatent();
+		}
+		else {
+			// The path wasn't valid
+			return -1;
+		}
+
 		return 0;
 }
 
@@ -353,7 +407,32 @@ static int vfs_truncate(const char *file, off_t offset)
 
 		return 0;
 }
+int findNextAvailableFatent() {
+	for(int i = 0; i < )
+}
 
+int findDEBlock(char *path) {
+	// Finds the DE block # given the path
+	for(int i = 0; i < 100; i++) {
+		if (strcmp(allTheDirEnts[i].name, path)) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+int validPath(char *path) {
+	// Count the /'s
+	// If there's more than 1, give up.
+	int pathLength = strlen(path);
+	int counter = 0;
+	for(int i = 0; i < pathLength; i++) {
+		counter += strcmp(path[i], "/");
+	}
+
+	return counter;
+}
 
 /*
  * You shouldn't mess with this; it sets up FUSE
