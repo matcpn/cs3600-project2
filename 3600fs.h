@@ -32,7 +32,7 @@ typedef struct vcb_s {
 
 // Dirent Data Structure
 typedef struct dirent_s {
-	unsigned int valid;
+	unsigned int valid; // 1 means taken, 0 means free
 	unsigned int first_block;
 	unsigned int size;
 

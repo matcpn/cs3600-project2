@@ -42,6 +42,8 @@
 vcb myRealVCB;
 dirent allTheDirEnts[100];
 fatent *fatTable;
+int numberOfFatEnts;
+int firstDataBlock;
 
 /*
  * Initialize filesystem. Read in file system metadata and initialize
@@ -83,6 +85,9 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 		dread(i + 1, deTmp);
 		memcpy(&allTheDirEnts[i], deTmp, sizeof(dirent)); // Copy all dirents into their array so we can access them
 	}
+
+	numberOfFatEnts = myRealVCB.fat_length;
+	firstDataBlock = myRealVCB.db_start;
 
 	// Create the FAT Table
 	fatTable = (fatent *) malloc(myRealVCB.fat_length * BLOCKSIZE);
@@ -261,9 +266,12 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 			// Fatent needs to be instantiated.
 			// Size is still 0 right now.
 			// Make sure we write the dirent
+		if(findDEBlock(path) > 0) {
+			return -EEXIST;
+		}
 
-		// Check that the path is valid OR file already exists -> -1
-		if ((validPath(path) == 1) || (findDEBlock(path) < 0)) {
+		// Check that the path is valid
+		if (validPath(path) == 1) {
 			// Create a new DE
 			dirent dir;
 
@@ -279,8 +287,21 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 			clock_gettime(CLOCK_REALTIME, dir.modify_time);
 			clock_gettime(CLOCK_REALTIME, dir.create_time);
 
-			// Create a new Fatent
-			fatent fe = findNextAvailableFatent();
+			// Create a new Fatent and get it's #
+			int fe = findNextAvailableFatent();
+
+			if(fe == -1) {
+				return -ENOSPC; // Out of space
+			}
+
+			// Assign first_block of the dirent
+			dir.first_block = fe;
+
+			// Write the dirent
+			char deTmp[BLOCKSIZE];
+			memset(deTmp, 0, BLOCKSIZE);
+			memcpy(deTmp, &dir, sizeof(dirent));
+			dwrite(findNextAvailableDirEnt() + 1, deTmp); // Add 1 so it's 1-100, 0 is VCB
 		}
 		else {
 			// The path wasn't valid
@@ -327,8 +348,110 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 
 	/* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
 					 MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
+	/**
+	 * Loop through them and write the other data blocks and fatTable entries
+	 * Make sure to set fatTable entry.next to allocatedBlock[i+1]
+	 * use memset,memcpy and dwrite to write the last one cause it might not fit the
+	 * last BLOCK completely
+	 * Return size of the new file (offset + sizeOfBuffer)
+	 * ********* END originalSize == 0
+	 */
 
-	return 0;
+		// Find the Dirent
+		int dirEnt = findDEBlock(path);
+
+		// Find the FatEnt
+		int firstFatEnt = allTheDirEnts[dirEnt].first_block;
+
+		// Renamed them for my mental health
+	  char *buffer = buf;
+	  int sizeOfBuffer = size;
+	  int originalSize = allTheDirEnts[dirEnt].size;
+	  int currentNumberOfBlocks;
+
+	  // They always use 1 block
+	  if(originalSize == 0) {
+	  	currentNumberOfBlocks = 1; // Got 1 block from create
+	  }
+	  else {
+	  	currentNumberOfBlocks = originalSize / BLOCKSIZE;
+	  }
+
+	  // Start doing the real work here.
+	  if(originalSize == 0) { // Fresh file
+	  	if(sizeOfBuffer <= BLOCKSIZE) { // Write to this block, happily
+	  		char tempDataBlock[BLOCKSIZE];
+	  		memset(tempDataBlock, 0, BLOCKSIZE);
+	  		memcpy(tempDataBlock + offset, buffer, sizeOfBuffer);
+	  		dwrite(firstDataBlock + firstFatEnt, tempDataBlock); // firstDataBlock# + fatEnt#
+	  		// Update the fatEnt
+	  		fatTable[firstFatEnt].used = 1;
+	  		fatTable[firstFatEnt].eof = 1;
+	  		// Update the dirEnt size
+	  		allTheDirEnts[dirEnt].size = offset + sizeOfBuffer;
+	  		return sizeOfBuffer; 
+	  	}
+	  	else { // sizeOfBuffer > Blocksize, and we cry.
+	  		// Figure out how many blocks we need
+	  		int necessaryBlocks = (sizeOfBuffer + offset - BLOCKSIZE) / BLOCKSIZE + 1;
+	  		// We already have the first block allocated.
+	  		// Allocate an array of these fatEnts cause we're lazy-ish
+	  		int *fatEntryIndeces = (int *) calloc(necessaryBlocks, sizeof(int));
+	  		// Get the necessary FatEnts
+	  		for(int i = 0; i < necessaryBlocks; i++) {
+	  			int fatEntry = findNextAvailableFatent();
+	  			if(fatEntry == -1) {
+	  				return -ENOSPC;
+	  			}
+	  			fatEntryIndeces[i] = fatEntry;
+	  		}
+	  		// Now we have an array of the fatEnts we can use [int, int, int]
+	  		// Write the first block
+	  		dwrite(firstDataBlock + firstFatEnt, buffer);
+	  		// Update fatEnt
+	  		fatTable[firstFatEnt].eof = 0;
+	  		fatTable[firstFatEnt].next = fatTable[fatEntryIndeces[0]];
+
+	  		// All the blocks up until the last one cause it may not fill an entire block
+	  		for(int a = 0; a < necessaryBlocks; a++) {
+	  			// If its not the last one
+	  			if ( a < (necessaryBlocks-1)) {
+	  				fatTable[fatEntryIndeces[a]].next = fatEntryIndeces[a+1];
+	  				fatTable[fatEntryIndeces[a]].eof = 0;
+	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE)));
+	  			}
+	  			else { // It is the last one woo, finally.
+	  				// Set the last Fatent, finally.
+	  				fatTable[fatEntryIndeces[a]].next = 0;
+	  				fatTable[fatEntryIndeces[a]].eof = 1;
+	  				// Don't want to copy garbage so at this point the leftovers
+	  				// Could be less than BLOCKSIZE... stupid.
+	  				int leftoverBufferSize = sizeOfBuffer - BLOCKSIZE - (a * BLOCKSIZE);
+	  				char tempDataBlock[BLOCKSIZE];
+	  				memset(tempDataBlock, 0, BLOCKSIZE);
+	  				memcpy(tempDataBlock, sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
+	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);
+	  			}
+	  		}
+	  		// We're done, we're friggin done
+	  		// Update the dirEnt size
+	  		allTheDirEnts[dirEnt].size = offset + sizeOfBuffer;
+	  		return sizeOfBuffer; 
+	  	}
+	  }
+	  else if (originalSize < (sizeOfBuffer + offset)) { // It's not a fresh file, kill us now.
+	  /** 
+			* else if originalSize < sizeOfBuffer + offset These are in bytes...ugh
+			* Find out how many blocks the original uses
+			* Find out how many buffer+offset need
+			* If I need more, allocate the data blocks and update their fatents...ugh
+			* 
+	  	*/
+			int currentNumberOfBlocksUsed = originalSize / BLOCKSIZE + 1;
+			int numberOfBlocksWeNeed = (offset + sizeOfBuffer) / BLOCKSIZE + 1;
+			
+	  }
+
 }
 
 /**
@@ -408,7 +531,24 @@ static int vfs_truncate(const char *file, off_t offset)
 		return 0;
 }
 int findNextAvailableFatent() {
-	for(int i = 0; i < )
+	for(int i = 0; i < numberOfFatEnts; i++) {
+		if(fatTable[i].used == 0) {
+			fatTable[i].used = 1;
+			fatTable[i].eof = 1;
+			return i;
+		}
+	}
+
+	return -1; // If it's full, which is terrible.
+}
+
+// 
+int findNextAvailableDirEnt() {
+	for(int i = 0; i < 100; i++) {
+		if(allTheDirEnts[i].valid == 0) { // 0 means free
+			return i; // Returns 0-99
+		}
+	}
 }
 
 int findDEBlock(char *path) {
