@@ -53,4 +53,12 @@ typedef struct fatent_s {
 	unsigned int next:30;
 } fatent;
 
+int findNextAvailableFatent();
+
+int findNextAvailableDirEnt();
+
+int findDEBlock(const char* path);
+
+int validPath(const char* path);
+
 #endif

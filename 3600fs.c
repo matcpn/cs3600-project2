@@ -283,9 +283,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 			dir.mode = mode;
 
 			// Assign times
-			clock_gettime(CLOCK_REALTIME, dir.access_time);
-			clock_gettime(CLOCK_REALTIME, dir.modify_time);
-			clock_gettime(CLOCK_REALTIME, dir.create_time);
+			clock_gettime(CLOCK_REALTIME, &dir.access_time);
+			clock_gettime(CLOCK_REALTIME, &dir.modify_time);
+			clock_gettime(CLOCK_REALTIME, &dir.create_time);
 
 			// Create a new Fatent and get it's #
 			int fe = findNextAvailableFatent();
@@ -364,18 +364,17 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 		int firstFatEnt = allTheDirEnts[dirEnt].first_block;
 
 		// Renamed them for my mental health
-	  char *buffer = buf;
+	  const char *buffer = buf;
 	  int sizeOfBuffer = size;
 	  int originalSize = allTheDirEnts[dirEnt].size;
-	  int currentNumberOfBlocks;
 
-	  // They always use 1 block
-	  if(originalSize == 0) {
-	  	currentNumberOfBlocks = 1; // Got 1 block from create
-	  }
-	  else {
-	  	currentNumberOfBlocks = originalSize / BLOCKSIZE;
-	  }
+	  // // They always use 1 block
+	  // if(originalSize == 0) {
+	  // 	int currentNumberOfBlocks = 1; // Got 1 block from create
+	  // }
+	  // else {
+	  // 	int currentNumberOfBlocks = originalSize / BLOCKSIZE;
+	  // }
 
 	  // Start doing the real work here.
 	  if(originalSize == 0) { // Fresh file
@@ -407,10 +406,10 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  		}
 	  		// Now we have an array of the fatEnts we can use [int, int, int]
 	  		// Write the first block
-	  		dwrite(firstDataBlock + firstFatEnt, buffer);
+	  		dwrite(firstDataBlock + firstFatEnt, (char *)buffer);
 	  		// Update fatEnt
 	  		fatTable[firstFatEnt].eof = 0;
-	  		fatTable[firstFatEnt].next = fatTable[fatEntryIndeces[0]];
+	  		fatTable[firstFatEnt].next = fatEntryIndeces[0];
 
 	  		// All the blocks up until the last one cause it may not fill an entire block
 	  		for(int a = 0; a < necessaryBlocks; a++) {
@@ -418,7 +417,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			if ( a < (necessaryBlocks-1)) {
 	  				fatTable[fatEntryIndeces[a]].next = fatEntryIndeces[a+1];
 	  				fatTable[fatEntryIndeces[a]].eof = 0;
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE)));
+	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *)(buffer + BLOCKSIZE + (a * BLOCKSIZE)));
 	  			}
 	  			else { // It is the last one woo, finally.
 	  				// Set the last Fatent, finally.
@@ -429,7 +428,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  				int leftoverBufferSize = sizeOfBuffer - BLOCKSIZE - (a * BLOCKSIZE);
 	  				char tempDataBlock[BLOCKSIZE];
 	  				memset(tempDataBlock, 0, BLOCKSIZE);
-	  				memcpy(tempDataBlock, sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
+	  				memcpy(tempDataBlock, buffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
 	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);
 	  			}
 	  		}
@@ -455,7 +454,12 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 				int numberOfNewBlocksWeNeed = numberOfBlocksWeNeed - numberOfBlocksWeHave;
 				// Find the eof, fatEnt index
 				int currentFatEnt = firstFatEnt;
+				int blockNumberCurrentlyAt = 0;
 				while(!fatTable[currentFatEnt].eof) {
+					if(blockNumberCurrentlyAt == numberOfNewBlocksWeNeed) {
+						break;
+					}
+					blockNumberCurrentlyAt++;
 					currentFatEnt = fatTable[currentFatEnt].next;
 				}
 				// At this point, current is the old last one.
@@ -473,7 +477,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  		}
 
 	  		fatTable[currentFatEnt].eof = 0; // It's no longer the last fatent
-	  		fatTable[currentFatEnt].next = fatTable[fatEntryIndeces[0]];
+	  		fatTable[currentFatEnt].next = fatEntryIndeces[0];
 
 	  		// All the blocks up until the last one cause it may not fill an entire block
 	  		for(int a = 0; a < numberOfNewBlocksWeNeed; a++) {
@@ -481,7 +485,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			if ( a < (numberOfNewBlocksWeNeed-1)) {
 	  				fatTable[fatEntryIndeces[a]].next = fatEntryIndeces[a+1];
 	  				fatTable[fatEntryIndeces[a]].eof = 0;
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE)));
+	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (buffer + BLOCKSIZE + (a * BLOCKSIZE)));
 	  			}
 	  			else { // It is the last one woo, finally.
 	  				// Set the last Fatent, finally.
@@ -492,7 +496,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  				int leftoverBufferSize = sizeOfBuffer - BLOCKSIZE - (a * BLOCKSIZE);
 	  				char tempDataBlock[BLOCKSIZE];
 	  				memset(tempDataBlock, 0, BLOCKSIZE);
-	  				memcpy(tempDataBlock, sizeOfBuffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
+	  				memcpy(tempDataBlock, buffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
 	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);
 	  			}
 	  		}
@@ -508,7 +512,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  		if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE + 1)) { // If we're writing to the last block, hint: we should be.
 	  			char tempDataBlock[BLOCKSIZE];
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
-	  			memcpy(firstDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
+	  			memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
 	  			dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
 	  		}
 	  		else { // If we need to write to more than one block
@@ -544,8 +548,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 			 	/** BEGIN "DO THE WRITES" */
 	  		// Find the block that we need to start writing at using the offset
 				int blockToStartWritingAt = offset / BLOCKSIZE + 1;
-	  		// Blocks we have in use, cause we're great.
-				int numberOfBlocksWeHave = originalSize / BLOCKSIZE + 1;
 
 	  		// Find the fatent with eof (while loops for dayz)
 				int currentFatEnt = firstFatEnt;
@@ -563,7 +565,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  		if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE + 1)) { // If we're writing to the last block
 	  			char tempDataBlock[BLOCKSIZE];
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
-	  			memcpy(firstDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
+	  			memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
 	  			dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
 	  			// It's finally written, christ...
 	  		}
@@ -604,8 +606,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  	/** BEGIN "DO THE WRITES" */
 	  	// Find the block that we need to start writing at using the offset
 	  	int blockToStartWritingAt = offset / BLOCKSIZE + 1;
-	  	// Blocks we have in use, cause we're great.
-	  	int numberOfBlocksWeHave = originalSize / BLOCKSIZE + 1;
 	  	
 	  	// Find the fatent with eof (while loops for dayz)
 	  	int currentFatEnt = firstFatEnt;
@@ -623,7 +623,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  	if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE + 1)) { // If we're writing to the last block
 	  		char tempDataBlock[BLOCKSIZE];
 	  		dread(firstDataBlock + currentFatEnt, tempDataBlock);
-	  		memcpy(firstDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
+	  		memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
 	  		dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
 	  		// It's finally written, christ...
 
@@ -761,7 +761,7 @@ int findNextAvailableDirEnt() {
 	return -1;
 }
 
-int findDEBlock(char *path) {
+int findDEBlock(const char* path) {
 	// Finds the DE block # given the path
 	for(int i = 0; i < 100; i++) {
 		if (strcmp(allTheDirEnts[i].name, path)) {
@@ -772,13 +772,13 @@ int findDEBlock(char *path) {
 	return -1;
 }
 
-int validPath(char *path) {
+int validPath(const char* path) {
 	// Count the /'s
 	// If there's more than 1, give up.
 	int pathLength = strlen(path);
 	int counter = 0;
 	for(int i = 0; i < pathLength; i++) {
-		counter += strcmp(*path[i], "/");
+		counter += (path[i] == '/');
 	}
 
 	return counter;
