@@ -269,23 +269,22 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 		if(findDEBlock(path) > 0) {
 			return -EEXIST;
 		}
-
 		// Check that the path is valid
 		if (validPath(path) == 1) {
-			// Create a new DE
-			dirent dir;
+			int dir = findNextAvailableDirEnt();
 
 			// Assign dir things
-			dir.valid = 1;
-			dir.size = 0;
-			dir.user = getuid();
-			dir.group = getgid();
-			dir.mode = mode;
+			allTheDirEnts[dir].valid = 1;
+			allTheDirEnts[dir].size = 0;
+			allTheDirEnts[dir].user = getuid();
+			allTheDirEnts[dir].group = getgid();
+			allTheDirEnts[dir].mode = mode;
+			strcpy(allTheDirEnts[dir].name, path);
 
 			// Assign times
-			clock_gettime(CLOCK_REALTIME, &dir.access_time);
-			clock_gettime(CLOCK_REALTIME, &dir.modify_time);
-			clock_gettime(CLOCK_REALTIME, &dir.create_time);
+			clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dir].access_time);
+			clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dir].modify_time);
+			clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dir].create_time);
 
 			// Create a new Fatent and get it's #
 			int fe = findNextAvailableFatent();
@@ -295,13 +294,12 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 			}
 
 			// Assign first_block of the dirent
-			dir.first_block = fe;
-
+			allTheDirEnts[dir].first_block = fe;
 			// Write the dirent
 			char deTmp[BLOCKSIZE];
 			memset(deTmp, 0, BLOCKSIZE);
-			memcpy(deTmp, &dir, sizeof(dirent));
-			dwrite(findNextAvailableDirEnt() + 1, deTmp); // Add 1 so it's 1-100, 0 is VCB
+			memcpy(deTmp, &allTheDirEnts[dir], sizeof(dirent));
+			dwrite(dir + 1, deTmp); // Add 1 so it's 1-100, 0 is VCB
 		}
 		else {
 			// The path wasn't valid
@@ -781,11 +779,9 @@ static int vfs_delete(const char *path)
 	    	allTheDirEnts[i].name[0] = '\0';
 
 	      	while (!fatTable[i].eof) {
-	      		assert (fatTable[i].used);
 	      		fatTable[i].used = 0;
 	      		i = fatTable[i].next;
 	      	}
-	      	assert(fatTable[i].used);
 	      	fatTable[i].used = 0;
 	      	
 	      	//write the dirent
@@ -905,9 +901,9 @@ int validPath(const char* path) {
 	int pathLength = strlen(path);
 	int counter = 0;
 	for(int i = 0; i < pathLength; i++) {
-		counter += (path[i] == '/');
+		if (path[i] == '/')
+			counter++;
 	}
-
 	return counter;
 }
 
