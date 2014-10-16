@@ -447,11 +447,75 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 			* If I need more, allocate the data blocks and update their fatents...ugh
 			* 
 	  	*/
-			int currentNumberOfBlocksUsed = originalSize / BLOCKSIZE + 1;
+			int numberOfBlocksWeHave = originalSize / BLOCKSIZE + 1;
 			int numberOfBlocksWeNeed = (offset + sizeOfBuffer) / BLOCKSIZE + 1;
-			
+			if(numberOfBlocksWeNeed > numberOfBlocksWeHave) {
+				// We need to allocate new blocks
+			}
+			else {
+				// We don't, just do the writes...
+			}
+
+	  }
+	  else {
+	  	// JUST DO THE WRITES
+	  	// Find the block that we need to start writing at using the offset
+	  	int blockToStartWritingAt = offset / BLOCKSIZE + 1;
+	  	// Blocks we have in use, cause we're great.
+	  	int numberOfBlocksWeHave = originalSize / BLOCKSIZE + 1;
+	  	
+	  	// Find the fatent with eof (while loops for dayz)
+	  	int currentFatEnt = firstFatEnt;
+	  	int blockNumberCurrentlyAt = 0;
+	  	while(!fatTable[currentFatEnt].eof) {
+	  		if(blockNumberCurrentlyAt == blockToStartWritingAt) {
+	  			break;
+	  		}
+	  		blockNumberCurrentlyAt++;
+	  		currentFatEnt = fatTable[currentFatEnt].next;
+	  	}
+	  	// At this point currentFatEnt should hold the fatEnt index I want.
+	  	// blockNumberCurrentlyAt should be equal to blockToStartWritingAt
+
+	  	if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE + 1)) { // If we're writing to the last block
+	  		char tempDataBlock[BLOCKSIZE];
+	  		dread(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		memcpy(firstDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
+	  		dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		// It's finally written, christ...
+
+	  	}
+	  	else { // If we need to write to more than one block
+	  		char tempDataBlock[BLOCKSIZE];
+	  		// Copy the beginning of the offset block to the offset, cause we needs it.
+	  		// How much data is that OH WAIT, WHAT? MATH??
+	  		int weakBeginningDataAmount = BLOCKSIZE - (offset % BLOCKSIZE);
+	  		dread(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, weakBeginningDataAmount);
+	  		dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		blockNumberCurrentlyAt++; // Go to the next block.
+	  		currentFatEnt = fatTable[currentFatEnt].next; // Really, go to the next block.
+
+	  		int theLastBlockNumber = (offset + sizeOfBuffer) / BLOCKSIZE;
+	  		int anotherCounter;
+	  		// Do your best to write the blocks in the middle
+	  		for(anotherCounter = 0; blockNumberCurrentlyAt < theLastBlockNumber; anotherCounter++) {
+	  			dwrite(firstDataBlock + currentFatEnt, (char *) buffer + (anotherCounter + 1) * BLOCKSIZE - offset % BLOCKSIZE);
+	  		}
+
+	  		dread(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		weakBeginningDataAmount =  (offset + sizeOfBuffer) % BLOCKSIZE;
+	  		memset(tempDataBlock, 0, BLOCKSIZE);
+	  		memcpy(tempDataBlock, buffer + (anotherCounter + 1) * BLOCKSIZE - offset % BLOCKSIZE, weakBeginningDataAmount);
+	  		dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  		fatTable[currentFatEnt].eof = 1;
+	  	}
+
+	  	allTheDirEnts[dirEnt].size = offset + sizeOfBuffer;
+	  	return sizeOfBuffer; 
 	  }
 
+	  return -ENOENT;
 }
 
 /**
