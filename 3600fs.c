@@ -327,8 +327,114 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 										struct fuse_file_info *fi)
 {
+	for (int i = 0; i < 100; i++) {
+	  if (strcmp(allTheDirEnts[i].name, path) == 0 && allTheDirEnts[i].valid == 1) {
+	    //Dont try to read something that starts past the end of the file please
+	    if (offset >= allTheDirEnts[i].size) {
+	    	return -1;
+	    }
+	    //Just for convenience
+	    int fileLength = allTheDirEnts[i].size;
+	    //apparently size is unsigned and the compiler doesn't like that. 
+	    int signedSize = size;
 
-		return 0;
+	    //Find out which block the byte is in
+	    int startingBlock;
+	    if ((offset + 1) == 0) {
+			startingBlock = offset + 1;
+		}
+		else {
+			startingBlock = (offset - 1)/BLOCKSIZE;
+		}
+
+		//check if size is going to read past the end of the file. If it is, make sure it doesn't do that.
+		if (fileLength < offset + signedSize) {
+			signedSize = fileLength - offset;
+		}
+
+		//Find out where the read ends (after adjusting the size of the read)
+		int endingBlock;
+		if ((offset + signedSize) == 0) {
+			endingBlock = 0;
+		}
+		else {
+			endingBlock = (offset + signedSize)/BLOCKSIZE;
+		}
+
+		//We can finally start doing things
+		//Step 1 is to find the block in the fat table
+		int i = 0;
+		int currentBlock = firstDataBlock;
+		while (!fatTable[currentBlock].eof) {
+			//If you've found the starting block, thats great, you're done
+			if (i == startingBlock) {
+				break;
+			}
+			//Otherwise keep going until you find it
+			currentBlock = fatTable[currentBlock].next;
+			i++;
+		}
+
+		int numberOfBytesRead = 0; //just keep track of the number of bytes we've read
+		int numberOfBytesRemaining = signedSize; //and keep track of how many bytes are left
+
+		//check if we're going to be reading more than one block
+		if (offset % BLOCKSIZE + signedSize > BLOCKSIZE) {
+			//so lets start reading blocks
+			char tmp[BLOCKSIZE];
+			memset(tmp, 0, BLOCKSIZE);
+			dread(startingBlock + currentBlock, tmp);
+			memcpy(buf, tmp + offset % BLOCKSIZE, BLOCKSIZE - offset % BLOCKSIZE);
+
+			//update the number of bytes we've read
+			numberOfBytesRead = BLOCKSIZE - offset % BLOCKSIZE;
+			//change the current block to be the next one and increment the counter
+			currentBlock = fatTable[currentBlock].next;
+			i++;
+			//update the number of bytes left to read
+			numberOfBytesRemaining = numberOfBytesRemaining - numberOfBytesRead;
+
+			//now that we've read the first block, the rest are a bit easier, since you just read the entire block (unless its the last one)
+			while(currentBlock <= endingBlock) {
+				if (fatTable[currentBlock].used != 1) {
+					//we cant read from a block that isn't used, so dont tell us to
+					return -1;
+				}
+
+				if (numberOfBytesRemaining >= BLOCKSIZE) {
+					//if you're reading more than blocksize, then you can just read all of currentblock and iterate again
+					memset(tmp, 0, BLOCKSIZE);
+					dread(startingBlock + currentBlock, tmp);
+					memcpy( buf + numberOfBytesRead, tmp, BLOCKSIZE);
+					//and dont forget to update the important stuff
+					numberOfBytesRead += BLOCKSIZE;
+					numberOfBytesRemaining -=BLOCKSIZE;
+				}
+				else { //we're in the last block
+					memset(tmp, 0, BLOCKSIZE);
+					dread(startingBlock + currentBlock, tmp);
+					memcpy(buf + numberOfBytesRead, tmp, numberOfBytesRemaining); //key step here
+					numberOfBytesRead += numberOfBytesRemaining;
+					numberOfBytesRemaining = 0; //dont really need to update this but its pretty satisfying
+					break;
+				}
+				//update the things that keep the while loop going
+				currentBlock = fatTable[currentBlock].next;
+				i++;
+			}
+
+			return numberOfBytesRead;
+		}
+		else { //only have to read one block (yay)
+			char tmp[BLOCKSIZE];
+			memset(tmp, 0, BLOCKSIZE);
+			dread(startingBlock + currentBlock, tmp);
+			memcpy(buf, tmp + offset % BLOCKSIZE, numberOfBytesRemaining);
+			return numberOfBytesRemaining;
+		}
+	  } //ending to the if statement that checks to see if we have the right dirent
+	}// ending to the for loop that goes through all the dirents
+	return -ENOENT;
 }
 
 /*
@@ -669,10 +775,31 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 static int vfs_delete(const char *path)
 {
 
-	/* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
-					 AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
+	for (int i = 0; i < 100; i++) {
+	    if (strcmp(allTheDirEnts[i].name, path) == 0 && allTheDirEnts[i].valid == 1) {
+	      	allTheDirEnts[i].valid = 0;
+	    	allTheDirEnts[i].name[0] = '\0';
 
-		return 0;
+	      	while (!fatTable[i].eof) {
+	      		assert (fatTable[i].used);
+	      		fatTable[i].used = 0;
+	      		i = fatTable[i].next;
+	      	}
+	      	assert(fatTable[i].used);
+	      	fatTable[i].used = 0;
+	      	
+	      	//write the dirent
+	      	char tmp[BLOCKSIZE];
+	      	memset(tmp, 0, BLOCKSIZE);
+	      	memcpy(tmp, &allTheDirEnts[i], sizeof(dirent));
+	      	dwrite(i + 1, tmp);
+
+	      	return 0;
+	    }
+  }
+  
+  // if control reaches here, that means the file did not exist
+  return -ENOENT;
 }
 
 /*
