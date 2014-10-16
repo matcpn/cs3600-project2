@@ -227,9 +227,6 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
 		// Only do anything if in root since we're not supporting more directories
 		if (strcmp(path, "/") == 0) {
-				// Generic stat object to do work with
-
-				// Loop through dirents and get valid stat info
 				filler(buf, ".", 0, 0);
 				filler(buf, "..", 0, 0);
 				for(int i = offset; i < 100; i++) {
@@ -240,7 +237,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 						stat_struct.st_uid = allTheDirEnts[i].user;
 						stat_struct.st_gid = allTheDirEnts[i].group;
 						stat_struct.st_mode = allTheDirEnts[i].mode;
-						filler(buf, allTheDirEnts[i].name, &stat_struct, 0);
+						filler(buf, (allTheDirEnts[i].name + 1), &stat_struct, 0);
 					}
 				}
 		}
@@ -460,7 +457,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	 * Return size of the new file (offset + sizeOfBuffer)
 	 * ********* END originalSize == 0
 	 */
-
 		// Find the Dirent
 		int dirEnt = findDEBlock(path);
 
