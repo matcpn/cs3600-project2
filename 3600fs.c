@@ -535,16 +535,18 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 			* If I need more, allocate the data blocks and update their fatents...ugh
 			* 
 	  	*/
+
 			int numberOfBlocksWeHave = originalSize / BLOCKSIZE + 1;
 			int numberOfBlocksWeNeed = (offset + sizeOfBuffer) / BLOCKSIZE + 1;
-			if(numberOfBlocksWeNeed > numberOfBlocksWeHave) {  // ------------------------ This if branch is super questionable -----------------------------/
+			int blockToStartWritingAt = offset / BLOCKSIZE;
+			if(numberOfBlocksWeNeed > numberOfBlocksWeHave) {  // ------------------------ This if branch is super questionable -----------------------------/ if writing past end of file into new block
 				// We need to allocate new blocks
 				int numberOfNewBlocksWeNeed = numberOfBlocksWeNeed - numberOfBlocksWeHave;
 				// Find the eof, fatEnt index
 				int currentFatEnt = firstFatEnt;
 				int blockNumberCurrentlyAt = 0;
 				while(!fatTable[currentFatEnt].eof) {
-					if(blockNumberCurrentlyAt == numberOfNewBlocksWeNeed) {
+					if(blockNumberCurrentlyAt == blockToStartWritingAt) {
 						break;
 					}
 					blockNumberCurrentlyAt++;
@@ -565,29 +567,28 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  		}
 
 	  		fatTable[currentFatEnt].eof = 0; // It's no longer the last fatent
+	  		fatTable[currentFatEnt].used = 1;
 	  		fatTable[currentFatEnt].next = fatEntryIndeces[0];
-
+	  		int a = 0;
 	  		// All the blocks up until the last one cause it may not fill an entire block
-	  		for(int a = 0; a < numberOfNewBlocksWeNeed; a++) {
+	  		for(; a < numberOfNewBlocksWeNeed - 1; a++) {
 	  			// If its not the last one
-	  			if ( a < (numberOfNewBlocksWeNeed-1)) {
 	  				fatTable[fatEntryIndeces[a]].next = fatEntryIndeces[a+1];
+	  				fatTable[fatEntryIndeces[a]].used = 1;
 	  				fatTable[fatEntryIndeces[a]].eof = 0;
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (buffer + BLOCKSIZE + (a * BLOCKSIZE)));
-	  			}
-	  			else { // It is the last one woo, finally.
+	  				//dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (buffer + BLOCKSIZE + (a * BLOCKSIZE)));
 	  				// Set the last Fatent, finally.
-	  				fatTable[fatEntryIndeces[a]].next = 0;
-	  				fatTable[fatEntryIndeces[a]].eof = 1;
 	  				// Don't want to copy garbage so at this point the leftovers
 	  				// Could be less than BLOCKSIZE... stupid.
-	  				int leftoverBufferSize = sizeOfBuffer - BLOCKSIZE - (a * BLOCKSIZE);
+	  				/*int leftoverBufferSize = sizeOfBuffer - BLOCKSIZE - (a * BLOCKSIZE);
 	  				char tempDataBlock[BLOCKSIZE];
 	  				memset(tempDataBlock, 0, BLOCKSIZE);
 	  				memcpy(tempDataBlock, buffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);
-	  			}
+	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);*/
 	  		}
+	  			  	fatTable[fatEntryIndeces[a]].next = 0;
+	  				fatTable[fatEntryIndeces[a]].eof = 1;
+	  				fatTable[fatEntryIndeces[a]].used = 1;
 				// If there's a space between offset and originalSize, then pad with 0s
 				if(offset > originalSize) {
 					// Padd with 0s
@@ -596,8 +597,8 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 				// Do the writes
 				/** BEGIN "DO THE WRITES" */
 	  		// Find the block that we need to start writing at using the offset
-				int blockToStartWritingAt = offset / BLOCKSIZE;
-	  		if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE)) { // If we're writing to the last block, hint: we should be.
+				
+	  		if (blockToStartWritingAt == ((offset + sizeOfBuffer) / BLOCKSIZE + 1)) { // If we're writing to the last block, hint: we should be.
 	  			char tempDataBlock[BLOCKSIZE];
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
 	  			memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
@@ -629,9 +630,10 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			fatTable[currentFatEnt].eof = 1;
 	  		}
 				// Return how much you wrote.
-				return sizeOfBuffer + (offset - originalSize); 
+	  			allTheDirEnts[dirEnt].size = offset + sizeOfBuffer;
+				return sizeOfBuffer; 
 			}
-			else { // ------------------------ This else branch is questionable -----------------------------/
+			else { // ------------------------ This else branch is questionable -----------------------------/ writing into the eof block but not getting new ones
 			 	/** BEGIN "DO THE WRITES" */
 	  		// Find the block that we need to start writing at using the offset
 				int blockToStartWritingAt = offset / BLOCKSIZE + 1;
@@ -689,7 +691,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 			}
 
 	  }
-	  else {
+	  else { //overwriting
 	  	/** BEGIN "DO THE WRITES" */
 	  	// Find the block that we need to start writing at using the offset
 	  	int blockToStartWritingAt = offset / BLOCKSIZE + 1;
