@@ -334,13 +334,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 	    int signedSize = size;
 
 	    //Find out which block the byte is in
-	    int startingBlock;
-	    if ((offset + 1) == 0) {
-			startingBlock = offset + 1;
-		}
-		else {
-			startingBlock = (offset - 1)/BLOCKSIZE;
-		}
+	    int startingBlock = offset / BLOCKSIZE;
 
 		//check if size is going to read past the end of the file. If it is, make sure it doesn't do that.
 		if (fileLength < offset + signedSize) {
@@ -348,26 +342,20 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 		}
 
 		//Find out where the read ends (after adjusting the size of the read)
-		int endingBlock;
-		if ((offset + signedSize) == 0) {
-			endingBlock = 0;
-		}
-		else {
-			endingBlock = (offset + signedSize)/BLOCKSIZE;
-		}
+		int endingBlock = (offset + signedSize)/BLOCKSIZE;
 
 		//We can finally start doing things
 		//Step 1 is to find the block in the fat table
-		int i = 0;
-		int currentBlock = firstDataBlock;
+		int blockNumber = 0;
+		int currentBlock = allTheDirEnts[i].first_block;
 		while (!fatTable[currentBlock].eof) {
 			//If you've found the starting block, thats great, you're done
-			if (i == startingBlock) {
+			if (blockNumber == startingBlock) {
 				break;
 			}
 			//Otherwise keep going until you find it
 			currentBlock = fatTable[currentBlock].next;
-			i++;
+			blockNumber++;
 		}
 
 		int numberOfBytesRead = 0; //just keep track of the number of bytes we've read
@@ -378,19 +366,19 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 			//so lets start reading blocks
 			char tmp[BLOCKSIZE];
 			memset(tmp, 0, BLOCKSIZE);
-			dread(startingBlock + currentBlock, tmp);
+			dread(firstDataBlock + currentBlock, tmp);
 			memcpy(buf, tmp + offset % BLOCKSIZE, BLOCKSIZE - offset % BLOCKSIZE);
 
 			//update the number of bytes we've read
 			numberOfBytesRead = BLOCKSIZE - offset % BLOCKSIZE;
 			//change the current block to be the next one and increment the counter
 			currentBlock = fatTable[currentBlock].next;
-			i++;
+			blockNumber++;
 			//update the number of bytes left to read
 			numberOfBytesRemaining = numberOfBytesRemaining - numberOfBytesRead;
 
 			//now that we've read the first block, the rest are a bit easier, since you just read the entire block (unless its the last one)
-			while(currentBlock <= endingBlock) {
+			while(blockNumber <= endingBlock) {
 				if (fatTable[currentBlock].used != 1) {
 					//we cant read from a block that isn't used, so dont tell us to
 					return -1;
@@ -399,15 +387,15 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 				if (numberOfBytesRemaining >= BLOCKSIZE) {
 					//if you're reading more than blocksize, then you can just read all of currentblock and iterate again
 					memset(tmp, 0, BLOCKSIZE);
-					dread(startingBlock + currentBlock, tmp);
+					dread(firstDataBlock + currentBlock, tmp);
 					memcpy( buf + numberOfBytesRead, tmp, BLOCKSIZE);
 					//and dont forget to update the important stuff
 					numberOfBytesRead += BLOCKSIZE;
-					numberOfBytesRemaining -=BLOCKSIZE;
+					numberOfBytesRemaining -= BLOCKSIZE;
 				}
 				else { //we're in the last block
 					memset(tmp, 0, BLOCKSIZE);
-					dread(startingBlock + currentBlock, tmp);
+					dread(firstDataBlock + currentBlock, tmp);
 					memcpy(buf + numberOfBytesRead, tmp, numberOfBytesRemaining); //key step here
 					numberOfBytesRead += numberOfBytesRemaining;
 					numberOfBytesRemaining = 0; //dont really need to update this but its pretty satisfying
@@ -415,7 +403,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 				}
 				//update the things that keep the while loop going
 				currentBlock = fatTable[currentBlock].next;
-				i++;
+				blockNumber++;
 			}
 
 			return numberOfBytesRead;
@@ -423,7 +411,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 		else { //only have to read one block (yay)
 			char tmp[BLOCKSIZE];
 			memset(tmp, 0, BLOCKSIZE);
-			dread(startingBlock + currentBlock, tmp);
+			dread(firstDataBlock + currentBlock, tmp);
 			memcpy(buf, tmp + offset % BLOCKSIZE, numberOfBytesRemaining);
 			return numberOfBytesRemaining;
 		}
@@ -803,8 +791,13 @@ static int vfs_delete(const char *path)
  */
 static int vfs_rename(const char *from, const char *to)
 {
-
+	int dirent = findDEBlock(from);
+	if (dirent != -1) {
+		strcpy(allTheDirEnts[dirent].name, to);
+		clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dirent].modify_time);
 		return 0;
+	}
+	return -ENOENT;
 }
 
 
@@ -819,8 +812,13 @@ static int vfs_rename(const char *from, const char *to)
  */
 static int vfs_chmod(const char *file, mode_t mode)
 {
-
+	int dirent = findDEBlock(file);
+	if (dirent != -1) {
+		allTheDirEnts[dirent].mode = (mode & 0x0000ffff);
+		clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dirent].modify_time);
 		return 0;
+	}
+	return -ENOENT;
 }
 
 /*
@@ -830,8 +828,15 @@ static int vfs_chmod(const char *file, mode_t mode)
  */
 static int vfs_chown(const char *file, uid_t uid, gid_t gid)
 {
-
+	int dirent = findDEBlock(file);
+	if (dirent != -1) {
+		allTheDirEnts[dirent].user = uid;
+		allTheDirEnts[dirent].group = gid;
+		clock_gettime(CLOCK_REALTIME, &allTheDirEnts[dirent].modify_time);
 		return 0;
+	}
+		
+	return -ENOENT;
 }
 
 /*
@@ -840,8 +845,14 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
  */
 static int vfs_utimens(const char *file, const struct timespec ts[2])
 {
-
+	int dirent = findDEBlock(file);
+	if (dirent != -1) {
+		allTheDirEnts[dirent].access_time = ts[0];
+		allTheDirEnts[dirent].modify_time = ts[1];
 		return 0;
+	}
+		
+	return -ENOENT;
 }
 
 /*
@@ -854,8 +865,50 @@ static int vfs_truncate(const char *file, off_t offset)
 
 	/* 3600: NOTE THAT ANY BLOCKS FREED BY THIS OPERATION SHOULD
 					 BE AVAILABLE FOR OTHER FILES TO USE. */
+	int dirent = findDEBlock(file);
+	if (dirent != -1) {
+		if (offset > allTheDirEnts[dirent].size) {
+			return -1;
+		}
+		int offsetBlockNum = offset / BLOCKSIZE;
+		int lastDataBlock = allTheDirEnts[dirent].size / BLOCKSIZE;
+		if (offsetBlockNum == lastDataBlock) {
+			allTheDirEnts[dirent].size = offset;
+			return 0;
+		}
+		else {
+			int currentFatEnt = allTheDirEnts[dirent].first_block;
+			int a = 0;
+			while (!fatTable[a].eof) {
+				if (fatTable[a].used == 0) {
+					return -1;
+				}
 
-		return 0;
+				if (a == offsetBlockNum) {
+					break;
+				}
+
+				currentFatEnt = fatTable[currentFatEnt].next;
+				a++;
+			}
+
+			if (fatTable[a].eof == 1) {
+				return -1;
+			}
+
+			fatTable[currentFatEnt].eof = 1;
+			currentFatEnt = fatTable[currentFatEnt].next;
+			while (!fatTable[currentFatEnt].eof) {
+				fatTable[currentFatEnt].used = 0;
+				currentFatEnt = fatTable[currentFatEnt].next;
+			}
+			fatTable[currentFatEnt].used = 0;
+			fatTable[currentFatEnt].eof = 0;
+			allTheDirEnts[dirent].size = offset;
+			return 0;
+		}
+	}
+	return -ENOENT;
 }
 int findNextAvailableFatent() {
 	for(int i = 0; i < numberOfFatEnts; i++) {
