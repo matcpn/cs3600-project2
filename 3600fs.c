@@ -492,7 +492,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  	}
 	  	else { // sizeOfBuffer > Blocksize, and we cry.
 	  		// Figure out how many blocks we need
-	  		int necessaryBlocks = (sizeOfBuffer + offset - BLOCKSIZE) / BLOCKSIZE + 1;
+	  		int necessaryBlocks = (sizeOfBuffer - BLOCKSIZE - 1) / BLOCKSIZE + 1;
 	  		// We already have the first block allocated.
 	  		// Allocate an array of these fatEnts cause we're lazy-ish
 	  		int *fatEntryIndeces = (int *) calloc(necessaryBlocks, sizeof(int));
@@ -585,7 +585,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			if ( a < (numberOfNewBlocksWeNeed-1)) {
 	  				fatTable[fatEntryIndeces[a]].next = fatEntryIndeces[a+1];
 	  				fatTable[fatEntryIndeces[a]].eof = 0;
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], (char *) (buffer + BLOCKSIZE + (a * BLOCKSIZE)));
+	  				dwrite(firstDataBlock + fatEntryIndeces[a] + 1, (char *) (buffer + BLOCKSIZE + (a * BLOCKSIZE)));
 	  			}
 	  			else { // It is the last one woo, finally.
 	  				// Set the last Fatent, finally.
@@ -597,7 +597,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  				char tempDataBlock[BLOCKSIZE];
 	  				memset(tempDataBlock, 0, BLOCKSIZE);
 	  				memcpy(tempDataBlock, buffer + BLOCKSIZE + (a * BLOCKSIZE), leftoverBufferSize);
-	  				dwrite(firstDataBlock + fatEntryIndeces[a], tempDataBlock);
+	  				dwrite(firstDataBlock + fatEntryIndeces[a] + 1, tempDataBlock);
 	  			}
 	  		}
 				// If there's a space between offset and originalSize, then pad with 0s
@@ -613,7 +613,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			char tempDataBlock[BLOCKSIZE];
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
 	  			memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, sizeOfBuffer);
-	  			dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  			dwrite(firstDataBlock + currentFatEnt + 1, tempDataBlock);
 	  		}
 	  		else { // If we need to write to more than one block
 	  			char tempDataBlock[BLOCKSIZE];
@@ -622,7 +622,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			int weakBeginningDataAmount = BLOCKSIZE - (offset % BLOCKSIZE);
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
 	  			memcpy(tempDataBlock + (offset % BLOCKSIZE), buffer, weakBeginningDataAmount);
-	  			dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  			dwrite(firstDataBlock + currentFatEnt + 1, tempDataBlock);
 	  			blockNumberCurrentlyAt++; // Go to the next block.
 	  			currentFatEnt = fatTable[currentFatEnt].next; // Really, go to the next block.
 
@@ -630,14 +630,14 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	  			int anotherCounter;
 	  			// Do your best to write the blocks in the middle
 	  			for(anotherCounter = 0; blockNumberCurrentlyAt < theLastBlockNumber; anotherCounter++) {
-	  				dwrite(firstDataBlock + currentFatEnt, (char *) buffer + (anotherCounter + 1) * BLOCKSIZE - offset % BLOCKSIZE);
+	  				dwrite(firstDataBlock + currentFatEnt + 1, (char *) buffer + (anotherCounter + 1) * BLOCKSIZE - offset % BLOCKSIZE);
 	  			}
 
 	  			dread(firstDataBlock + currentFatEnt, tempDataBlock);
 	  			weakBeginningDataAmount =  (offset + sizeOfBuffer) % BLOCKSIZE;
 	  			memset(tempDataBlock, 0, BLOCKSIZE);
 	  			memcpy(tempDataBlock, buffer + (anotherCounter + 1) * BLOCKSIZE - offset % BLOCKSIZE, weakBeginningDataAmount);
-	  			dwrite(firstDataBlock + currentFatEnt, tempDataBlock);
+	  			dwrite(firstDataBlock + currentFatEnt + 1, tempDataBlock);
 	  			fatTable[currentFatEnt].eof = 1;
 	  		}
 
@@ -883,7 +883,7 @@ int findNextAvailableDirEnt() {
 int findDEBlock(const char* path) {
 	// Finds the DE block # given the path
 	for(int i = 0; i < 100; i++) {
-		if (strcmp(allTheDirEnts[i].name, path)) {
+		if (strcmp(allTheDirEnts[i].name, path) == 0) {
 			return i;
 		}
 	}
